@@ -144,6 +144,16 @@ def get_installed_versions(module, remote=False):
                 installed_versions.append(version.split()[0])
     return installed_versions
 
+def get_version_from_local_gem(module):
+    cmd = get_rubygems_path(module)
+    cmd.append('specification')
+    cmd.append('{0}'.format(module.params['gem_source']))
+    cmd.append('| {0} -ryaml -e "puts YAML.load(STDIN).version"'.format(cmd[0].replace('gem', 'ruby')))
+
+    (rc, out, err) = module.run_command(' '.join(cmd), check_rc=True, use_unsafe_shell=True)
+
+    return out.strip()
+
 def exists(module):
 
     if module.params['state'] == 'latest':
@@ -188,6 +198,13 @@ def install(module):
     cmd.append('install')
     if module.params['version']:
         cmd.extend([ '--version', module.params['version'] ])
+        if module.params['gem_source']:
+            local_gem_file_version = get_version_from_local_gem(module)
+            if local_gem_file_version != module.params['version']:
+                module.fail_json(
+                    msg='Version of the local gem file does not match version specified',
+                    local_gem_file_version=local_gem_file_version
+                )
     if module.params['repository']:
         cmd.extend([ '--source', module.params['repository'] ])
     if not module.params['include_dependencies']:
@@ -209,7 +226,7 @@ def install(module):
             cmd.append('--no-document')
     if module.params['env_shebang']:
         cmd.append('--env-shebang')
-    cmd.append(module.params['gem_source'])
+    cmd.append(module.params['gem_source'] or module.params['name'])
     if module.params['build_flags']:
         cmd.extend([ '--', module.params['build_flags'] ])
     module.run_command(cmd, check_rc=True)
@@ -232,16 +249,13 @@ def main():
             build_flags          = dict(required=False, type='str'),
         ),
         supports_check_mode = True,
-        mutually_exclusive = [ ['gem_source','repository'], ['gem_source','version'] ],
+        mutually_exclusive = [ ['gem_source','repository'] ],
     )
 
     if module.params['version'] and module.params['state'] == 'latest':
         module.fail_json(msg="Cannot specify version when state=latest")
     if module.params['gem_source'] and module.params['state'] == 'latest':
         module.fail_json(msg="Cannot maintain state=latest when installing from local source")
-
-    if not module.params['gem_source']:
-        module.params['gem_source'] = module.params['name']
 
     changed = False
 
